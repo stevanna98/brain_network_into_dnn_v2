@@ -124,7 +124,7 @@ def load_fc_matrix(path: str | None, n: int) -> np.ndarray:
     fc = matrices[random_idx]
 
     subject = list(data.keys())[random_idx]
-    print(f"Loaded FC from {len(matrices)} subjects — shape {fc.shape}.")
+    print(f"Loaded FC from {data[subject['subject_id']]} subjects — shape {fc.shape}.")
     print(f"Selected subject: sex={data[subject]['gender']}, age={data[subject]['age']}")
     return fc
 
