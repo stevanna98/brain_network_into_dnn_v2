@@ -293,12 +293,12 @@ def save_plots(
     # 2. Training loss curve (full history up to this epoch)
     fig, ax = plt.subplots(figsize=(6, 4))
     ax.plot(epochs, train_losses, color="tomato", marker="o", markersize=3)
-    ax.set_title("Training loss")
+    ax.set_title(f"Training loss ({init_tag})")
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Cross-entropy loss")
     ax.set_xlim(1, max(epochs) if len(epochs) > 1 else 2)
     fig.tight_layout()
-    fig.savefig(os.path.join(plots_dir, "loss.png"), dpi=100)
+    fig.savefig(os.path.join(plots_dir, f"loss_{init_tag}.png"), dpi=100)
     plt.close(fig)
 
     # 3. Accuracy curve — train and val (full history up to this epoch)
@@ -307,13 +307,13 @@ def save_plots(
             marker="o", markersize=3, label="Train")
     ax.plot(epochs, [a * 100 for a in val_accs],   color="darkorange",
             marker="o", markersize=3, label="Val")
-    ax.set_title("Accuracy")
+    ax.set_title(f"Accuracy ({init_tag})")
     ax.set_xlabel("Epoch")
     ax.set_ylabel("Accuracy (%)")
     ax.set_xlim(1, max(epochs) if len(epochs) > 1 else 2)
     ax.legend()
     fig.tight_layout()
-    fig.savefig(os.path.join(plots_dir, "accuracy.png"), dpi=100)
+    fig.savefig(os.path.join(plots_dir, f"accuracy_{init_tag}.png"), dpi=100)
     plt.close(fig)
 
 
