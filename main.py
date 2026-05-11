@@ -19,6 +19,10 @@ import pickle
 import sys
 import random
 
+import matplotlib
+matplotlib.use("Agg")   # non-interactive backend — safe for scripts and Colab
+import matplotlib.pyplot as plt
+
 import numpy as np
 import torch
 import torch.nn as nn
@@ -71,7 +75,7 @@ def parse_args() -> argparse.Namespace:
         help="Number of hidden layers inside BrainConnectivityMLP.",
     )
     parser.add_argument(
-        "--use_fc_init", default=False,
+        "--use_fc_init", action='store_true', default=False,
         help="Initialise MLP weights from the FC matrix (default: Kaiming random).",
     )
 
@@ -88,6 +92,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--checkpoint", type=str, default="checkpoint.pt",
         help="Path to save the trained model weights.",
+    )
+    parser.add_argument(
+        "--plots_dir", type=str, default="/content/drive/MyDrive/IMPERIAL/plots",
+        help="Directory where per-epoch plots are saved.",
     )
 
     return parser.parse_args()
@@ -250,6 +258,64 @@ def evaluate(
 
 
 # ---------------------------------------------------------------------------
+# Plotting
+# ---------------------------------------------------------------------------
+
+def save_plots(
+    model: nn.Module,
+    epoch: int,
+    train_losses: list[float],
+    train_accs: list[float],
+    val_accs: list[float],
+    plots_dir: str,
+) -> None:
+    """Save three plots for the current epoch to plots_dir."""
+    os.makedirs(plots_dir, exist_ok=True)
+    epochs = list(range(1, epoch + 1))
+
+    # 1. Weight distribution — snapshot of brain_mlp weights at this epoch
+    all_weights = torch.cat([
+        layer.weight.data.cpu().flatten()
+        for layer in model.brain_mlp.linear_layers()
+    ]).numpy()
+
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.hist(all_weights, bins=100, color="steelblue", edgecolor="none")
+    ax.set_title(f"Weight distribution — epoch {epoch}")
+    ax.set_xlabel("Weight value")
+    ax.set_ylabel("Count")
+    fig.tight_layout()
+    fig.savefig(os.path.join(plots_dir, f"weights_epoch_{epoch:03d}.png"), dpi=100)
+    plt.close(fig)
+
+    # 2. Training loss curve (full history up to this epoch)
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.plot(epochs, train_losses, color="tomato", marker="o", markersize=3)
+    ax.set_title("Training loss")
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Cross-entropy loss")
+    ax.set_xlim(1, max(epochs) if len(epochs) > 1 else 2)
+    fig.tight_layout()
+    fig.savefig(os.path.join(plots_dir, "loss.png"), dpi=100)
+    plt.close(fig)
+
+    # 3. Accuracy curve — train and val (full history up to this epoch)
+    fig, ax = plt.subplots(figsize=(6, 4))
+    ax.plot(epochs, [a * 100 for a in train_accs], color="steelblue",
+            marker="o", markersize=3, label="Train")
+    ax.plot(epochs, [a * 100 for a in val_accs],   color="darkorange",
+            marker="o", markersize=3, label="Val")
+    ax.set_title("Accuracy")
+    ax.set_xlabel("Epoch")
+    ax.set_ylabel("Accuracy (%)")
+    ax.set_xlim(1, max(epochs) if len(epochs) > 1 else 2)
+    ax.legend()
+    fig.tight_layout()
+    fig.savefig(os.path.join(plots_dir, "accuracy.png"), dpi=100)
+    plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -272,15 +338,26 @@ def main() -> None:
     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     criterion = nn.CrossEntropyLoss()
 
+    os.makedirs(args.plots_dir, exist_ok=True)
+    print(f"Plots  : {args.plots_dir}/\n")
+
     header = f"{'Epoch':>5}  {'Train loss':>10}  {'Train acc':>9}  {'Val loss':>9}  {'Val acc':>8}"
     print(header)
     print("-" * len(header))
+
+    train_losses, train_accs, val_accs = [], [], []
 
     for epoch in range(1, args.epochs + 1):
         train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, criterion, device)
         val_loss,   val_acc   = evaluate(model, val_loader, criterion, device)
 
+        train_losses.append(train_loss)
+        train_accs.append(train_acc)
+        val_accs.append(val_acc)
+
         print(f"{epoch:>5}  {train_loss:>10.4f}  {train_acc:>9.3%}  {val_loss:>9.4f}  {val_acc:>8.3%}")
+
+        save_plots(model, epoch, train_losses, train_accs, val_accs, args.plots_dir)
 
     torch.save(model.state_dict(), args.checkpoint)
     print(f"\nCheckpoint saved to {args.checkpoint}")
