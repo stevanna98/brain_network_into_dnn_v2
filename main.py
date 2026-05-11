@@ -268,10 +268,12 @@ def save_plots(
     train_accs: list[float],
     val_accs: list[float],
     plots_dir: str,
+    use_fc_init: bool,
 ) -> None:
     """Save three plots for the current epoch to plots_dir."""
     os.makedirs(plots_dir, exist_ok=True)
     epochs = list(range(1, epoch + 1))
+    init_tag = "fc_init" if use_fc_init else "random_init"
 
     # 1. Weight distribution — snapshot of brain_mlp weights at this epoch
     all_weights = torch.cat([
@@ -281,11 +283,11 @@ def save_plots(
 
     fig, ax = plt.subplots(figsize=(6, 4))
     ax.hist(all_weights, bins=100, color="steelblue", edgecolor="none")
-    ax.set_title(f"Weight distribution — epoch {epoch}")
+    ax.set_title(f"Weight distribution ({init_tag}) — epoch {epoch}")
     ax.set_xlabel("Weight value")
     ax.set_ylabel("Count")
     fig.tight_layout()
-    fig.savefig(os.path.join(plots_dir, f"weights_epoch_{epoch:03d}.png"), dpi=100)
+    fig.savefig(os.path.join(plots_dir, f"weights_{init_tag}_epoch_{epoch:03d}.png"), dpi=100)
     plt.close(fig)
 
     # 2. Training loss curve (full history up to this epoch)
@@ -357,7 +359,7 @@ def main() -> None:
 
         print(f"{epoch:>5}  {train_loss:>10.4f}  {train_acc:>9.3%}  {val_loss:>9.4f}  {val_acc:>8.3%}")
 
-        save_plots(model, epoch, train_losses, train_accs, val_accs, args.plots_dir)
+        save_plots(model, epoch, train_losses, train_accs, val_accs, args.plots_dir, args.use_fc_init)
 
     torch.save(model.state_dict(), args.checkpoint)
     print(f"\nCheckpoint saved to {args.checkpoint}")
