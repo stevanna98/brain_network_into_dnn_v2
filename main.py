@@ -17,6 +17,7 @@ import argparse
 import os
 import pickle
 import sys
+import random
 
 import numpy as np
 import torch
@@ -29,6 +30,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from src.brain_to_dnn import BrainConnectivityMLP
 
 seed_value = 42
+random.seed(seed_value)
 np.random.seed(seed_value)
 torch.manual_seed(seed_value)
 torch.cuda.manual_seed(seed_value)
@@ -118,14 +120,12 @@ def load_fc_matrix(path: str | None, n: int) -> np.ndarray:
     with open(path, "rb") as f:
         data = pickle.load(f)
 
-    matrices = [v["FC"] for v in data.values() if "FC" in v]
-
-    random_idx = np.random.randint(len(matrices))
-    fc = matrices[random_idx]
-
-    subject = list(data.keys())[random_idx]
-    print(f"Loaded FC from {data[subject['subject_id']]} subjects — shape {fc.shape}.")
-    print(f"Selected subject: sex={data[subject]['gender']}, age={data[subject]['age']}")
+    subject_id = random.choice(list(data.keys()))
+    fc = data[subject_id]['FC']
+    sex = data[subject_id]['gender']
+    age = data[subject_id]['age']
+    print(f"Loaded FC from {subject_id} — shape {fc.shape}.")
+    print(f"Selected subject: sex={sex}, age={age}")
     return fc
 
 
