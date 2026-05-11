@@ -90,7 +90,7 @@ def parse_args() -> argparse.Namespace:
         help="Device override (e.g. 'cpu', 'cuda', 'mps'). Auto-detected if not set.",
     )
     parser.add_argument(
-        "--checkpoint", type=str, default="checkpoint.pt",
+        "--checkpoint", type=str, default="/content/drive/MyDrive/IMPERIAL/checkpoint",
         help="Path to save the trained model weights.",
     )
     parser.add_argument(
