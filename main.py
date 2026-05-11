@@ -61,7 +61,7 @@ def parse_args() -> argparse.Namespace:
         help="Number of hidden layers inside BrainConnectivityMLP.",
     )
     parser.add_argument(
-        "--use_fc_init", action="store_true", default=False,
+        "--use_fc_init", default=False,
         help="Initialise MLP weights from the FC matrix (default: Kaiming random).",
     )
 
