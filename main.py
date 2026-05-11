@@ -28,6 +28,14 @@ from torch.utils.data import DataLoader
 sys.path.insert(0, os.path.dirname(__file__))
 from src.brain_to_dnn import BrainConnectivityMLP
 
+seed_value = 42
+np.random.seed(seed_value)
+torch.manual_seed(seed_value)
+torch.cuda.manual_seed(seed_value)
+torch.cuda.manual_seed_all(seed_value)
+torch.backends.cudnn.deterministic = True
+torch.backends.cudnn.benchmark = False
+
 
 # ---------------------------------------------------------------------------
 # Argument parser
@@ -111,6 +119,7 @@ def load_fc_matrix(path: str | None, n: int) -> np.ndarray:
         data = pickle.load(f)
 
     matrices = [v["FC"] for v in data.values() if "FC" in v]
+
     random_idx = np.random.randint(len(matrices))
     fc = matrices[random_idx]
 
