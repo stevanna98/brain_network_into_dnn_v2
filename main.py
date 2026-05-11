@@ -7,10 +7,13 @@ Full pipeline:
   -> BrainConnectivityMLP     (N -> N, weights optionally from FC matrix)
   -> Linear classifier        (N -> 10 classes)
 
-Set FC_MATRIX_PATH to your HCP pickle file to use a real brain FC matrix,
-or leave it as None to use a random NxN matrix.
+Usage examples:
+  python main.py
+  python main.py --fc_path /path/to/data.pkl --use_fc_init
+  python main.py --n_nodes 128 --n_hidden 3 --epochs 20 --lr 5e-4
 """
 
+import argparse
 import os
 import pickle
 import sys
@@ -27,27 +30,67 @@ from src.brain_to_dnn import BrainConnectivityMLP
 
 
 # ---------------------------------------------------------------------------
-# Config
+# Argument parser
 # ---------------------------------------------------------------------------
 
-# Path to the HCP pickle file — set to None to use a random FC matrix.
-FC_MATRIX_PATH = '/content/drive/MyDrive/IMPERIAL/data/subject_data_1_cleaned_precise_age.pkl'
-SAVED_DATA_PATH = 'content/drive/MyDrive/IMPERIAL/data/image_dataset'
-# FC_MATRIX_PATH = "/Users/stefanovannoni/Desktop/IMPERIAL COLLEGE/Data/data/hcp_ya_dataset/subject_data_1_cleaned_precise_age.pkl"
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Train BrainConnectivityMLP on CIFAR-10.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
 
-N_NODES      = 379   # neurons per layer; ignored when FC_MATRIX_PATH is set (N comes from the file)
-N_HIDDEN     = 2     # number of hidden layers inside BrainConnectivityMLP
-USE_FC_INIT  = True  # True = init weights from FC matrix | False = Kaiming random init
+    # Data
+    parser.add_argument(
+        "--fc_path", type=str,
+        default="/content/drive/MyDrive/IMPERIAL/data/subject_data_1_cleaned_precise_age.pkl",
+        help="Path to HCP pickle file. Omit or set to 'none' to use a random FC matrix.",
+    )
+    parser.add_argument(
+        "--data_path", type=str,
+        default="content/drive/MyDrive/IMPERIAL/data/image_dataset",
+        help="Directory where CIFAR-10 data is stored (or will be downloaded).",
+    )
 
-BATCH_SIZE   = 256
-EPOCHS       = 100
-LR           = 1e-3
+    # Model
+    parser.add_argument(
+        "--n_nodes", type=int, default=379,
+        help="Neurons per layer. Ignored when --fc_path is set (N comes from the file).",
+    )
+    parser.add_argument(
+        "--n_hidden", type=int, default=2,
+        help="Number of hidden layers inside BrainConnectivityMLP.",
+    )
+    parser.add_argument(
+        "--use_fc_init", action="store_true", default=False,
+        help="Initialise MLP weights from the FC matrix (default: Kaiming random).",
+    )
 
-DEVICE = (
-    "mps"  if torch.backends.mps.is_available() else
-    "cuda" if torch.cuda.is_available() else
-    "cpu"
-)
+    # Training
+    parser.add_argument("--batch_size", type=int,   default=256)
+    parser.add_argument("--epochs",     type=int,   default=100)
+    parser.add_argument("--lr",         type=float, default=1e-3)
+
+    # Misc
+    parser.add_argument(
+        "--device", type=str, default=None,
+        help="Device override (e.g. 'cpu', 'cuda', 'mps'). Auto-detected if not set.",
+    )
+    parser.add_argument(
+        "--checkpoint", type=str, default="checkpoint.pt",
+        help="Path to save the trained model weights.",
+    )
+
+    return parser.parse_args()
+
+
+def resolve_device(override: str | None) -> str:
+    if override:
+        return override
+    if torch.backends.mps.is_available():
+        return "mps"
+    if torch.cuda.is_available():
+        return "cuda"
+    return "cpu"
 
 
 # ---------------------------------------------------------------------------
@@ -56,7 +99,7 @@ DEVICE = (
 
 def load_fc_matrix(path: str | None, n: int) -> np.ndarray:
     """Return an NxN FC matrix: loaded from an HCP pickle or randomly generated."""
-    if path is None:
+    if path is None or path.lower() == "none":
         rng = np.random.default_rng(42)
         raw = rng.standard_normal((n, n))
         fc  = (raw + raw.T) / 2          # make symmetric like a real FC matrix
@@ -68,12 +111,12 @@ def load_fc_matrix(path: str | None, n: int) -> np.ndarray:
         data = pickle.load(f)
 
     matrices = [v["FC"] for v in data.values() if "FC" in v]
-
     random_idx = np.random.randint(len(matrices))
     fc = matrices[random_idx]
 
-    print(f"Loaded mean FC from {len(matrices)} subjects — shape {fc.shape}.")
-    print(f"Sex: {data[list(data.keys())[random_idx]]['gender']}, Age: {data[list(data.keys())[random_idx]]['age']}")
+    subject = list(data.keys())[random_idx]
+    print(f"Loaded FC from {len(matrices)} subjects — shape {fc.shape}.")
+    print(f"Selected subject: sex={data[subject]['gender']}, age={data[subject]['age']}")
     return fc
 
 
@@ -120,8 +163,7 @@ class CIFARClassifier(nn.Module):
 # Data
 # ---------------------------------------------------------------------------
 
-def get_dataloaders(batch_size: int) -> tuple[DataLoader, DataLoader]:
-    # CIFAR-10 channel mean / std (pre-computed on the training set)
+def get_dataloaders(batch_size: int, data_path: str) -> tuple[DataLoader, DataLoader]:
     mean = (0.4914, 0.4822, 0.4465)
     std  = (0.2470, 0.2435, 0.2616)
 
@@ -131,13 +173,13 @@ def get_dataloaders(batch_size: int) -> tuple[DataLoader, DataLoader]:
     ])
 
     train_set = torchvision.datasets.CIFAR10(
-        root=SAVED_DATA_PATH, train=True,  download=True, transform=transform)
+        root=data_path, train=True,  download=True, transform=transform)
     val_set   = torchvision.datasets.CIFAR10(
-        root=SAVED_DATA_PATH, train=False, download=True, transform=transform)
+        root=data_path, train=False, download=True, transform=transform)
 
     # num_workers > 0 and pin_memory require CUDA; MPS/CPU work fine with 0 / False
-    pin  = torch.cuda.is_available()
-    nw   = 2 if torch.cuda.is_available() else 0
+    pin = torch.cuda.is_available()
+    nw  = 2 if torch.cuda.is_available() else 0
 
     train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True,
                               num_workers=nw, pin_memory=pin)
@@ -203,33 +245,36 @@ def evaluate(
 # ---------------------------------------------------------------------------
 
 def main() -> None:
-    print(f"Device : {DEVICE}")
-    print(f"FC init: {USE_FC_INIT}  |  hidden layers: {N_HIDDEN}  |  epochs: {EPOCHS}\n")
+    args   = parse_args()
+    device = resolve_device(args.device)
 
-    fc    = load_fc_matrix(FC_MATRIX_PATH, N_NODES)
-    model = CIFARClassifier(fc, N_HIDDEN, USE_FC_INIT).to(DEVICE)
+    print(f"Device : {device}")
+    print(f"FC init: {args.use_fc_init}  |  hidden layers: {args.n_hidden}  |  epochs: {args.epochs}\n")
+
+    fc    = load_fc_matrix(args.fc_path, args.n_nodes)
+    model = CIFARClassifier(fc, args.n_hidden, args.use_fc_init).to(device)
 
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model  : {model.brain_mlp}")
     print(f"Params : {n_params:,}\n")
 
-    train_loader, val_loader = get_dataloaders(BATCH_SIZE)
+    train_loader, val_loader = get_dataloaders(args.batch_size, args.data_path)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=LR)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     criterion = nn.CrossEntropyLoss()
 
     header = f"{'Epoch':>5}  {'Train loss':>10}  {'Train acc':>9}  {'Val loss':>9}  {'Val acc':>8}"
     print(header)
     print("-" * len(header))
 
-    for epoch in range(1, EPOCHS + 1):
-        train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, criterion, DEVICE)
-        val_loss,   val_acc   = evaluate(model, val_loader, criterion, DEVICE)
+    for epoch in range(1, args.epochs + 1):
+        train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, criterion, device)
+        val_loss,   val_acc   = evaluate(model, val_loader, criterion, device)
 
         print(f"{epoch:>5}  {train_loss:>10.4f}  {train_acc:>9.3%}  {val_loss:>9.4f}  {val_acc:>8.3%}")
 
-    torch.save(model.state_dict(), "checkpoint.pt")
-    print("\nCheckpoint saved to checkpoint.pt")
+    torch.save(model.state_dict(), args.checkpoint)
+    print(f"\nCheckpoint saved to {args.checkpoint}")
 
 
 if __name__ == "__main__":
