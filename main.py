@@ -78,6 +78,11 @@ def parse_args() -> argparse.Namespace:
         "--use_fc_init", action='store_true', default=False,
         help="Initialise MLP weights from the FC matrix (default: Kaiming random).",
     )
+    parser.add_argument(
+        "--keep_ratio", type=float, default=None,
+        help="If set, only keep the top X% strongest connections from the FC matrix; "
+             "the rest are zeroed out. Only applies if --use_fc_init is set.",
+    )
 
     # Training
     parser.add_argument("--batch_size", type=int,   default=256)
@@ -157,6 +162,7 @@ class CIFARClassifier(nn.Module):
         fc_matrix: np.ndarray,
         n_hidden_layers: int,
         use_fc_init: bool,
+        keep_ratio: float
     ) -> None:
         super().__init__()
         n = fc_matrix.shape[0]
@@ -166,6 +172,7 @@ class CIFARClassifier(nn.Module):
             fc_matrix,
             n_hidden_layers=n_hidden_layers,
             use_fc_init=use_fc_init,
+            keep_ratio=keep_ratio
         )
         self.classifier = nn.Linear(n, self.N_CLASSES)
 
@@ -329,7 +336,7 @@ def main() -> None:
     print(f"FC init: {args.use_fc_init}  |  hidden layers: {args.n_hidden}  |  epochs: {args.epochs}\n")
 
     fc    = load_fc_matrix(args.fc_path, args.n_nodes)
-    model = CIFARClassifier(fc, args.n_hidden, args.use_fc_init).to(device)
+    model = CIFARClassifier(fc, args.n_hidden, args.use_fc_init, args.keep_ratio).to(device)
 
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model  : {model.brain_mlp}")
