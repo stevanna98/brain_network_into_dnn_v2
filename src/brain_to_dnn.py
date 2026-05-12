@@ -21,6 +21,10 @@ class BrainConnectivityMLP(nn.Module):
                           is kept.
         activation:       Hidden-layer activation class (default: ReLU).
         output_activation: Optional activation class applied after the last layer.
+        keep_ratio:       Fraction of off-diagonal connections to keep (0, 1].
+                          Connections are ranked by absolute value; the weakest
+                          (1 - keep_ratio) fraction are zeroed before the matrix
+                          is used as a weight initialiser.  None means no thresholding.
     """
 
     def __init__(
@@ -30,6 +34,7 @@ class BrainConnectivityMLP(nn.Module):
         use_fc_init: bool = True,
         activation: Type[nn.Module] = nn.ReLU,
         output_activation: Optional[Type[nn.Module]] = None,
+        keep_ratio: Optional[float] = None,
     ) -> None:
         super().__init__()
 
@@ -39,12 +44,18 @@ class BrainConnectivityMLP(nn.Module):
             raise ValueError(f"fc_matrix must be square NxN, got {fc_tensor.shape}")
         if n_hidden_layers < 0:
             raise ValueError("n_hidden_layers must be >= 0")
+        if keep_ratio is not None and not (0 < keep_ratio <= 1):
+            raise ValueError("keep_ratio must be in (0, 1]")
 
         self.n_nodes = n
         self.n_hidden_layers = n_hidden_layers
         self.use_fc_init = use_fc_init
+        self.keep_ratio = keep_ratio
 
-        # Store FC matrix as a non-trainable buffer for later inspection.
+        if keep_ratio is not None:
+            fc_tensor = self._threshold_fc(fc_tensor, keep_ratio)
+
+        # Store the (possibly thresholded) FC matrix as a non-trainable buffer.
         self.register_buffer("fc_matrix", fc_tensor)
 
         self.network = self._build_network(fc_tensor, n, n_hidden_layers,
@@ -59,6 +70,28 @@ class BrainConnectivityMLP(nn.Module):
         if isinstance(m, np.ndarray):
             return torch.from_numpy(m).float()
         return m.float()
+
+    @staticmethod
+    def _threshold_fc(fc: torch.Tensor, keep_ratio: float) -> torch.Tensor:
+        """
+        Zero out the weakest off-diagonal connections, keeping keep_ratio
+        fraction by absolute value.  Diagonal entries are always preserved.
+        """
+        n = fc.shape[0]
+        off_diag_mask = ~torch.eye(n, dtype=torch.bool, device=fc.device)
+        abs_vals = fc[off_diag_mask].abs()
+        total = abs_vals.numel()
+
+        cutoff = torch.quantile(abs_vals, 1.0 - keep_ratio)
+        fc_thresh = fc.clone()
+        fc_thresh[off_diag_mask & (fc.abs() < cutoff)] = 0.0
+
+        kept = int((fc_thresh[off_diag_mask] != 0).sum().item())
+        print(
+            f"FC thresholding: kept {kept:,} / {total:,} off-diagonal connections "
+            f"({100 * kept / total:.1f}%)"
+        )
+        return fc_thresh
 
     @staticmethod
     def _build_network(
@@ -130,12 +163,14 @@ class BrainConnectivityMLP(nn.Module):
         return correlations
 
     def __repr__(self) -> str:
-        init_mode = "fc_matrix" if self.use_fc_init else "random (Kaiming)"
+        init_mode  = "fc_matrix" if self.use_fc_init else "random (Kaiming)"
+        thresh_str = f", keep_ratio={self.keep_ratio}" if self.keep_ratio is not None else ""
         return (
             f"BrainConnectivityMLP("
             f"n_nodes={self.n_nodes}, "
             f"n_hidden_layers={self.n_hidden_layers}, "
-            f"init={init_mode})"
+            f"init={init_mode}"
+            f"{thresh_str})"
         )
 
 
@@ -161,10 +196,14 @@ if __name__ == "__main__":
     print("\n=== Randomly-initialised MLP ===")
     model_rand = BrainConnectivityMLP(fc, n_hidden_layers=2, use_fc_init=False)
     print(model_rand)
-    print("Layer 0 weight matches FC:", torch.allclose(
-        model_rand.get_weight(0), torch.from_numpy(fc).float()))
 
-    x = torch.randn(5, N)  # batch of 5 samples
+    print("\n=== FC-initialised MLP with top-20% connections ===")
+    model_thresh = BrainConnectivityMLP(fc, n_hidden_layers=2, use_fc_init=True, keep_ratio=0.2)
+    print(model_thresh)
+    nonzero = (model_thresh.get_weight(0) != 0).sum().item()
+    print(f"Non-zero weights in layer 0: {nonzero} / {N*N}")
+
+    x = torch.randn(5, N)
     out = model_fc(x)
     print(f"\nForward pass: input {tuple(x.shape)} -> output {tuple(out.shape)}")
 
