@@ -161,6 +161,8 @@ class RAVENHFDataset(Dataset):
     """
 
     N_CONTEXT = 8
+    _IMAGE_FIELDS  = ["images", "image", "context", "panels"]
+    _ANSWER_FIELDS = ["answer", "target", "label"]
 
     def __init__(self, hf_split, resize_dim: int = 40) -> None:
         self.data      = hf_split
@@ -169,14 +171,30 @@ class RAVENHFDataset(Dataset):
             T.Resize((resize_dim, resize_dim), antialias=True),
             T.ToTensor(),   # -> (1, H, W) in [0, 1]
         ])
+        features = set(hf_split.features.keys())
+        self.image_field  = self._detect(features, self._IMAGE_FIELDS,  "image")
+        self.answer_field = self._detect(features, self._ANSWER_FIELDS, "answer")
+        print(f"  image field : '{self.image_field}'")
+        print(f"  answer field: '{self.answer_field}'")
+
+    @staticmethod
+    def _detect(features: set, candidates: list[str], role: str) -> str:
+        for name in candidates:
+            if name in features:
+                return name
+        raise KeyError(
+            f"Cannot find {role} field in dataset. "
+            f"Available fields: {sorted(features)}. "
+            f"Tried: {candidates}"
+        )
 
     def __len__(self) -> int:
         return len(self.data)
 
     def __getitem__(self, idx: int):
         example = self.data[idx]
-        panels  = example["images"][:self.N_CONTEXT]            # list of 8 PIL images
-        target  = int(example["answer"])
+        panels  = example[self.image_field][:self.N_CONTEXT]
+        target  = int(example[self.answer_field])
 
         context = torch.stack([self.transform(p) for p in panels])  # (8, 1, H, W)
         context = context.squeeze(1)                                  # (8, H, W)
