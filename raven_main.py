@@ -87,6 +87,9 @@ def parse_args() -> argparse.Namespace:
                         help="Number of hidden layers inside BrainConnectivityMLP.")
     parser.add_argument("--use_fc_init", action="store_true", default=False,
                         help="Initialise MLP weights from FC matrix (default: Kaiming random).")
+    parser.add_argument("--keep_ratio", type=float, default=None,
+                        help="If set, only keep the top X% strongest connections from the FC matrix; "
+                             "the rest are zeroed out. Only applies if --use_fc_init is set.")
 
     # Training
     parser.add_argument("--batch_size", type=int,   default=256)
@@ -258,6 +261,7 @@ class RAVENClassifier(nn.Module):
         n_hidden_layers: int,
         use_fc_init: bool,
         resize_dim: int,
+        keep_ratio: float
     ) -> None:
         super().__init__()
         n         = fc_matrix.shape[0]
@@ -268,6 +272,7 @@ class RAVENClassifier(nn.Module):
             fc_matrix,
             n_hidden_layers=n_hidden_layers,
             use_fc_init=use_fc_init,
+            keep_ratio=keep_ratio
         )
         self.classifier = nn.Linear(n, self.N_ANSWERS)
 
@@ -406,7 +411,7 @@ def main() -> None:
     print(f"Resize dim : {args.resize_dim}  |  MLP input dim: {input_dim}\n")
 
     fc    = load_fc_matrix(args.fc_path, args.n_nodes)
-    model = RAVENClassifier(fc, args.n_hidden, args.use_fc_init, args.resize_dim).to(device)
+    model = RAVENClassifier(fc, args.n_hidden, args.use_fc_init, args.resize_dim, args.keep_ratio).to(device)
 
     n_params = sum(p.numel() for p in model.parameters())
     print(f"Model  : {model.brain_mlp}")
