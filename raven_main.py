@@ -90,6 +90,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--keep_ratio", type=float, default=None,
                         help="If set, only keep the top X% strongest connections from the FC matrix; "
                              "the rest are zeroed out. Only applies if --use_fc_init is set.")
+    parser.add_argument("--sample", type=str, default="single",
+                        help="If --fc_path is set, whether to sample a single subject's FC ('single') or use the average FC across all subjects ('average').")  
 
     # Training
     parser.add_argument("--batch_size", type=int,   default=256)
@@ -125,7 +127,7 @@ def resolve_device(override: str | None) -> str:
 # FC matrix loading
 # ---------------------------------------------------------------------------
 
-def load_fc_matrix(path: str | None, n: int) -> np.ndarray:
+def load_fc_matrix(path: str | None, n: int, sample: str) -> np.ndarray:
     """Return an NxN FC matrix: loaded from an HCP pickle or randomly generated."""
     if path is None or path.lower() == "none":
         rng = np.random.default_rng(42)
@@ -137,12 +139,17 @@ def load_fc_matrix(path: str | None, n: int) -> np.ndarray:
 
     with open(path, "rb") as f:
         data = pickle.load(f)
-
-    subject_id = random.choice(list(data.keys()))
-    fc  = data[subject_id]["FC"]
-    sex = data[subject_id]["gender"]
-    age = data[subject_id]["age"]
-    print(f"Loaded FC from {subject_id} — shape {fc.shape}, sex={sex}, age={age}")
+    
+    if sample == 'single':
+        subject_id = random.choice(list(data.keys()))
+        fc  = data[subject_id]["FC"]
+        sex = data[subject_id]["gender"]
+        age = data[subject_id]["age"]
+        print(f"Loaded FC from {subject_id} — shape {fc.shape}, sex={sex}, age={age}")
+    elif sample == 'average':
+        fc_matrices = [data[subject_id]['FC'] for subject_id in data]
+        fc = np.mean(fc_matrices, axis=0)
+        print(f"Loaded average FC across {len(fc_matrices)} subjects — shape {fc.shape}")
     return fc
 
 
@@ -410,7 +417,7 @@ def main() -> None:
     print(f"FC init    : {args.use_fc_init}  |  hidden layers: {args.n_hidden}  |  epochs: {args.epochs}")
     print(f"Resize dim : {args.resize_dim}  |  MLP input dim: {input_dim}\n")
 
-    fc    = load_fc_matrix(args.fc_path, args.n_nodes)
+    fc    = load_fc_matrix(args.fc_path, args.n_nodes, args.sample)
     model = RAVENClassifier(fc, args.n_hidden, args.use_fc_init, args.resize_dim, args.keep_ratio).to(device)
 
     n_params = sum(p.numel() for p in model.parameters())
