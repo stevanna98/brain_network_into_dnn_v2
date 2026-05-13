@@ -344,7 +344,7 @@ def main() -> None:
     print(f"Device : {device}")
     print(f"FC init: {args.use_fc_init}  |  hidden layers: {args.n_hidden}  |  epochs: {args.epochs}\n")
 
-    fc    = load_fc_matrix(args.fc_path, args.n_nodes)
+    fc    = load_fc_matrix(args.fc_path, args.n_nodes, args.sample)
     model = CIFARClassifier(fc, args.n_hidden, args.use_fc_init, args.keep_ratio).to(device)
 
     n_params = sum(p.numel() for p in model.parameters())
