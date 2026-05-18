@@ -143,7 +143,7 @@ def load_fc_matrix(path: str | None, n: int, sample: str) -> tuple[np.ndarray, s
 
     if sample == 'single':
         # subject_id = random.choice(list(data.keys()))
-        subject_id = '737960'
+        subject_id = '203923'
         fc = data[subject_id]['FC']
         sex = data[subject_id]['gender']
         age = data[subject_id]['age']
