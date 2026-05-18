@@ -106,6 +106,10 @@ def parse_args() -> argparse.Namespace:
         "--plots_dir", type=str, default="/content/drive/MyDrive/IMPERIAL/plots",
         help="Directory where per-epoch plots are saved.",
     )
+    parser.add_argument(
+        "--metrics_dir", type=str, default="/content/drive/MyDrive/IMPERIAL/metrics",
+        help="Directory where per-subject .npy metric files are saved.",
+    )
 
     return parser.parse_args()
 
@@ -124,15 +128,15 @@ def resolve_device(override: str | None) -> str:
 # FC matrix loading
 # ---------------------------------------------------------------------------
 
-def load_fc_matrix(path: str | None, n: int, sample: str) -> np.ndarray:
-    """Return an NxN FC matrix: loaded from an HCP pickle or randomly generated."""
+def load_fc_matrix(path: str | None, n: int, sample: str) -> tuple[np.ndarray, str]:
+    """Return (fc_matrix, subject_tag) where subject_tag identifies the run."""
     if path is None or path.lower() == "none":
         rng = np.random.default_rng(42)
         raw = rng.standard_normal((n, n))
         fc  = (raw + raw.T) / 2          # make symmetric like a real FC matrix
         np.fill_diagonal(fc, 1.0)
         print(f"Using random {n}x{n} FC matrix (no path provided).")
-        return fc
+        return fc, "random"
 
     with open(path, "rb") as f:
         data = pickle.load(f)
@@ -144,11 +148,12 @@ def load_fc_matrix(path: str | None, n: int, sample: str) -> np.ndarray:
         age = data[subject_id]['age']
         print(f"Loaded FC from {subject_id} — shape {fc.shape}.")
         print(f"Selected subject: sex={sex}, age={age}")
+        return fc, str(subject_id)
     elif sample == 'average':
         fc_matrices = [data[subject_id]['FC'] for subject_id in data]
         fc = np.mean(fc_matrices, axis=0)
         print(f"Loaded average FC across {len(fc_matrices)} subjects — shape {fc.shape}")
-    return fc
+        return fc, "average"
 
 
 # ---------------------------------------------------------------------------
@@ -344,7 +349,7 @@ def main() -> None:
     print(f"Device : {device}")
     print(f"FC init: {args.use_fc_init}  |  hidden layers: {args.n_hidden}  |  epochs: {args.epochs}\n")
 
-    fc    = load_fc_matrix(args.fc_path, args.n_nodes, args.sample)
+    fc, subject_tag = load_fc_matrix(args.fc_path, args.n_nodes, args.sample)
     model = CIFARClassifier(fc, args.n_hidden, args.use_fc_init, args.keep_ratio).to(device)
 
     n_params = sum(p.numel() for p in model.parameters())
@@ -363,7 +368,7 @@ def main() -> None:
     print(header)
     print("-" * len(header))
 
-    train_losses, train_accs, val_accs = [], [], []
+    train_losses, train_accs, val_losses, val_accs = [], [], [], []
 
     for epoch in range(1, args.epochs + 1):
         train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, criterion, device)
@@ -371,6 +376,7 @@ def main() -> None:
 
         train_losses.append(train_loss)
         train_accs.append(train_acc)
+        val_losses.append(val_loss)
         val_accs.append(val_acc)
 
         print(f"{epoch:>5}  {train_loss:>10.4f}  {train_acc:>9.3%}  {val_loss:>9.4f}  {val_acc:>8.3%}")
@@ -379,6 +385,11 @@ def main() -> None:
 
     torch.save(model.state_dict(), args.checkpoint)
     print(f"\nCheckpoint saved to {args.checkpoint}")
+
+    os.makedirs(args.metrics_dir, exist_ok=True)
+    np.save(os.path.join(args.metrics_dir, f"val_loss_{subject_tag}.npy"), np.array(val_losses))
+    np.save(os.path.join(args.metrics_dir, f"val_acc_{subject_tag}.npy"),  np.array(val_accs))
+    print(f"Metrics saved to {args.metrics_dir}/ (subject: {subject_tag})")
 
 
 if __name__ == "__main__":
