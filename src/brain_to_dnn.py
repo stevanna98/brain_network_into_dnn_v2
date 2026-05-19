@@ -35,6 +35,7 @@ class BrainConnectivityMLP(nn.Module):
         activation: Type[nn.Module] = nn.ReLU,
         output_activation: Optional[Type[nn.Module]] = None,
         keep_ratio: Optional[float] = None,
+        n_frozen_fc_layers: int = 0,
     ) -> None:
         super().__init__()
 
@@ -46,11 +47,17 @@ class BrainConnectivityMLP(nn.Module):
             raise ValueError("n_hidden_layers must be >= 0")
         if keep_ratio is not None and not (0 < keep_ratio <= 1):
             raise ValueError("keep_ratio must be in (0, 1]")
+        n_total_layers = n_hidden_layers + 1
+        if not (0 <= n_frozen_fc_layers <= n_total_layers):
+            raise ValueError(
+                f"n_frozen_fc_layers must be between 0 and {n_total_layers}, got {n_frozen_fc_layers}"
+            )
 
         self.n_nodes = n
         self.n_hidden_layers = n_hidden_layers
         self.use_fc_init = use_fc_init
         self.keep_ratio = keep_ratio
+        self.n_frozen_fc_layers = n_frozen_fc_layers
 
         if keep_ratio is not None:
             fc_tensor = self._threshold_fc(fc_tensor, keep_ratio)
@@ -59,7 +66,12 @@ class BrainConnectivityMLP(nn.Module):
         self.register_buffer("fc_matrix", fc_tensor)
 
         self.network = self._build_network(fc_tensor, n, n_hidden_layers,
-                                           use_fc_init, activation, output_activation)
+                                           use_fc_init, activation, output_activation,
+                                           n_frozen_fc_layers)
+
+        # Freeze the first n_frozen_fc_layers linear layers.
+        for layer in self.linear_layers()[:n_frozen_fc_layers]:
+            layer.requires_grad_(False)
 
     # ------------------------------------------------------------------
     # Construction helpers
@@ -101,6 +113,7 @@ class BrainConnectivityMLP(nn.Module):
         use_fc_init: bool,
         activation: Type[nn.Module],
         output_activation: Optional[Type[nn.Module]],
+        n_frozen_fc_layers: int = 0,
     ) -> nn.Sequential:
         n_linear = n_hidden_layers + 1  # hidden layers + output layer
         layers: list[nn.Module] = []
@@ -108,7 +121,7 @@ class BrainConnectivityMLP(nn.Module):
         for i in range(n_linear):
             linear = nn.Linear(n, n)
 
-            if use_fc_init:
+            if use_fc_init or i < n_frozen_fc_layers:
                 with torch.no_grad():
                     linear.weight.copy_(fc_tensor)
                     nn.init.zeros_(linear.bias)
@@ -163,14 +176,16 @@ class BrainConnectivityMLP(nn.Module):
         return correlations
 
     def __repr__(self) -> str:
-        init_mode  = "fc_matrix" if self.use_fc_init else "random (Kaiming)"
-        thresh_str = f", keep_ratio={self.keep_ratio}" if self.keep_ratio is not None else ""
+        init_mode   = "fc_matrix" if self.use_fc_init else "random (Kaiming)"
+        thresh_str  = f", keep_ratio={self.keep_ratio}" if self.keep_ratio is not None else ""
+        frozen_str  = f", frozen_fc_layers={self.n_frozen_fc_layers}" if self.n_frozen_fc_layers > 0 else ""
         return (
             f"BrainConnectivityMLP("
             f"n_nodes={self.n_nodes}, "
             f"n_hidden_layers={self.n_hidden_layers}, "
             f"init={init_mode}"
-            f"{thresh_str})"
+            f"{thresh_str}"
+            f"{frozen_str})"
         )
 
 

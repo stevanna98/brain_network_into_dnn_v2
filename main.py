@@ -87,6 +87,11 @@ def parse_args() -> argparse.Namespace:
         "--sample", type=str, default="single",
         help="If --fc_path is set, whether to sample a single subject's FC ('single') or use the average FC across all subjects ('average')."
     )
+    parser.add_argument(
+        "--n_frozen_fc_layers", type=int, default=0,
+        help="Number of the first N brain-MLP layers to initialise from the FC matrix and freeze "
+             "(no gradient updates). Must be <= n_hidden + 1.",
+    )
 
     # Training
     parser.add_argument("--batch_size", type=int,   default=256)
@@ -177,7 +182,8 @@ class CIFARClassifier(nn.Module):
         fc_matrix: np.ndarray,
         n_hidden_layers: int,
         use_fc_init: bool,
-        keep_ratio: float
+        keep_ratio: float,
+        n_frozen_fc_layers: int = 0,
     ) -> None:
         super().__init__()
         n = fc_matrix.shape[0]
@@ -187,7 +193,8 @@ class CIFARClassifier(nn.Module):
             fc_matrix,
             n_hidden_layers=n_hidden_layers,
             use_fc_init=use_fc_init,
-            keep_ratio=keep_ratio
+            keep_ratio=keep_ratio,
+            n_frozen_fc_layers=n_frozen_fc_layers,
         )
         self.classifier = nn.Linear(n, self.N_CLASSES)
 
@@ -348,18 +355,23 @@ def main() -> None:
     device = resolve_device(args.device)
 
     print(f"Device : {device}")
-    print(f"FC init: {args.use_fc_init}  |  hidden layers: {args.n_hidden}  |  epochs: {args.epochs}\n")
+    print(f"FC init: {args.use_fc_init}  |  hidden layers: {args.n_hidden}  |  frozen FC layers: {args.n_frozen_fc_layers}  |  epochs: {args.epochs}\n")
 
     fc, subject_tag = load_fc_matrix(args.fc_path, args.n_nodes, args.sample)
-    model = CIFARClassifier(fc, args.n_hidden, args.use_fc_init, args.keep_ratio).to(device)
+    model = CIFARClassifier(
+        fc, args.n_hidden, args.use_fc_init, args.keep_ratio, args.n_frozen_fc_layers
+    ).to(device)
 
-    n_params = sum(p.numel() for p in model.parameters())
+    n_params       = sum(p.numel() for p in model.parameters())
+    n_trainable    = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Model  : {model.brain_mlp}")
-    print(f"Params : {n_params:,}\n")
+    print(f"Params : {n_params:,} total  |  {n_trainable:,} trainable\n")
 
     train_loader, val_loader = get_dataloaders(args.batch_size, args.data_path)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+    optimizer = torch.optim.Adam(
+        filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr
+    )
     criterion = nn.CrossEntropyLoss()
 
     os.makedirs(args.plots_dir, exist_ok=True)
