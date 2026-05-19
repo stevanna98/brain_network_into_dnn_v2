@@ -108,6 +108,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--batch_size", type=int,   default=256)
     parser.add_argument("--epochs",     type=int,   default=100)
     parser.add_argument("--lr",         type=float, default=1e-3)
+    parser.add_argument("--subject_id", type=str, default=None,
+        help="If --sample=single, specify a subject ID from the FC pickle file to use. Omit to select a random subject."
+    )
 
     # Misc
     parser.add_argument(
@@ -386,7 +389,7 @@ def main() -> None:
     print(f"Dataset : {args.dataset}")
     print(f"FC init : {args.use_fc_init}  |  hidden layers: {args.n_hidden}  |  frozen layers: {args.n_frozen_layers} (fc_init={args.frozen_fc_init})  |  epochs: {args.epochs}\n")
 
-    fc, subject_tag = load_fc_matrix(args.fc_path, args.n_nodes, args.sample)
+    fc, subject_tag = load_fc_matrix(args.fc_path, args.n_nodes, args.sample, args.subject_id)
     train_loader, val_loader, image_dim = get_dataloaders(
         args.batch_size, args.data_path, args.dataset
     )
