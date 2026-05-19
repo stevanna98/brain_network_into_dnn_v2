@@ -1,14 +1,15 @@
 """
-Train BrainConnectivityMLP on CIFAR-10.
+Train BrainConnectivityMLP on CIFAR-10 or MNIST.
 
 Full pipeline:
-  Flatten image (32x32x3 = 3072)
-  -> Linear input projection  (3072 -> N)
+  Flatten image (D pixels)
+  -> Linear input projection  (D -> N)
   -> BrainConnectivityMLP     (N -> N, weights optionally from FC matrix)
   -> Linear classifier        (N -> 10 classes)
 
 Usage examples:
   python main.py
+  python main.py --dataset mnist
   python main.py --fc_path /path/to/data.pkl --use_fc_init
   python main.py --n_nodes 128 --n_hidden 3 --epochs 20 --lr 5e-4
 """
@@ -49,11 +50,15 @@ torch.backends.cudnn.benchmark = False
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Train BrainConnectivityMLP on CIFAR-10.",
+        description="Train BrainConnectivityMLP on CIFAR-10 or MNIST.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
 
     # Data
+    parser.add_argument(
+        "--dataset", type=str, default="cifar10", choices=["cifar10", "mnist"],
+        help="Dataset to train on.",
+    )
     parser.add_argument(
         "--fc_path", type=str,
         default="/content/drive/MyDrive/IMPERIAL/data/subject_data_1_cleaned_precise_age.pkl",
@@ -62,7 +67,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--data_path", type=str,
         default="content/drive/MyDrive/IMPERIAL/data/image_dataset",
-        help="Directory where CIFAR-10 data is stored (or will be downloaded).",
+        help="Directory where dataset is stored (or will be downloaded).",
     )
 
     # Model
@@ -172,20 +177,20 @@ def load_fc_matrix(path: str | None, n: int, sample: str) -> tuple[np.ndarray, s
 # Model
 # ---------------------------------------------------------------------------
 
-class CIFARClassifier(nn.Module):
+class ImageClassifier(nn.Module):
     """
-    Adapts BrainConnectivityMLP to CIFAR-10:
-      - input_proj:  maps flattened image (3072) to brain-network dimension (N)
+    Adapts BrainConnectivityMLP to an image classification task:
+      - input_proj:  maps flattened image (image_dim) to brain-network dimension (N)
       - brain_mlp:   the brain-connectivity MLP (N -> N)
-      - classifier:  linear head (N -> 10 classes)
+      - classifier:  linear head (N -> n_classes)
     """
 
-    IMAGE_DIM = 32 * 32 * 3   # 3072
-    N_CLASSES  = 10
+    N_CLASSES = 10
 
     def __init__(
         self,
         fc_matrix: np.ndarray,
+        image_dim: int,
         n_hidden_layers: int,
         use_fc_init: bool,
         keep_ratio: float,
@@ -195,7 +200,7 @@ class CIFARClassifier(nn.Module):
         super().__init__()
         n = fc_matrix.shape[0]
 
-        self.input_proj = nn.Linear(self.IMAGE_DIM, n)
+        self.input_proj = nn.Linear(image_dim, n)
         self.brain_mlp  = BrainConnectivityMLP(
             fc_matrix,
             n_hidden_layers=n_hidden_layers,
@@ -207,29 +212,44 @@ class CIFARClassifier(nn.Module):
         self.classifier = nn.Linear(n, self.N_CLASSES)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        x = x.flatten(start_dim=1)           # (B, 3072)
-        x = torch.relu(self.input_proj(x))   # (B, N)
-        x = self.brain_mlp(x)                # (B, N)
-        return self.classifier(x)            # (B, 10)
+        x = x.flatten(start_dim=1)
+        x = torch.relu(self.input_proj(x))
+        x = self.brain_mlp(x)
+        return self.classifier(x)
 
 
 # ---------------------------------------------------------------------------
 # Data
 # ---------------------------------------------------------------------------
 
-def get_dataloaders(batch_size: int, data_path: str) -> tuple[DataLoader, DataLoader]:
-    mean = (0.4914, 0.4822, 0.4465)
-    std  = (0.2470, 0.2435, 0.2616)
+_DATASET_CFG = {
+    "cifar10": {
+        "cls":       torchvision.datasets.CIFAR10,
+        "image_dim": 32 * 32 * 3,
+        "mean":      (0.4914, 0.4822, 0.4465),
+        "std":       (0.2470, 0.2435, 0.2616),
+    },
+    "mnist": {
+        "cls":       torchvision.datasets.MNIST,
+        "image_dim": 28 * 28,
+        "mean":      (0.1307,),
+        "std":       (0.3081,),
+    },
+}
+
+
+def get_dataloaders(
+    batch_size: int, data_path: str, dataset: str
+) -> tuple[DataLoader, DataLoader, int]:
+    cfg = _DATASET_CFG[dataset]
 
     transform = transforms.Compose([
         transforms.ToTensor(),
-        transforms.Normalize(mean, std),
+        transforms.Normalize(cfg["mean"], cfg["std"]),
     ])
 
-    train_set = torchvision.datasets.CIFAR10(
-        root=data_path, train=True,  download=True, transform=transform)
-    val_set   = torchvision.datasets.CIFAR10(
-        root=data_path, train=False, download=True, transform=transform)
+    train_set = cfg["cls"](root=data_path, train=True,  download=True, transform=transform)
+    val_set   = cfg["cls"](root=data_path, train=False, download=True, transform=transform)
 
     # num_workers > 0 and pin_memory require CUDA; MPS/CPU work fine with 0 / False
     pin = torch.cuda.is_available()
@@ -239,7 +259,7 @@ def get_dataloaders(batch_size: int, data_path: str) -> tuple[DataLoader, DataLo
                               num_workers=nw, pin_memory=pin)
     val_loader   = DataLoader(val_set,   batch_size=batch_size, shuffle=False,
                               num_workers=nw, pin_memory=pin)
-    return train_loader, val_loader
+    return train_loader, val_loader, cfg["image_dim"]
 
 
 # ---------------------------------------------------------------------------
@@ -362,21 +382,23 @@ def main() -> None:
     args   = parse_args()
     device = resolve_device(args.device)
 
-    print(f"Device : {device}")
-    print(f"FC init: {args.use_fc_init}  |  hidden layers: {args.n_hidden}  |  frozen layers: {args.n_frozen_layers} (fc_init={args.frozen_fc_init})  |  epochs: {args.epochs}\n")
+    print(f"Device  : {device}")
+    print(f"Dataset : {args.dataset}")
+    print(f"FC init : {args.use_fc_init}  |  hidden layers: {args.n_hidden}  |  frozen layers: {args.n_frozen_layers} (fc_init={args.frozen_fc_init})  |  epochs: {args.epochs}\n")
 
     fc, subject_tag = load_fc_matrix(args.fc_path, args.n_nodes, args.sample)
-    model = CIFARClassifier(
-        fc, args.n_hidden, args.use_fc_init, args.keep_ratio,
+    train_loader, val_loader, image_dim = get_dataloaders(
+        args.batch_size, args.data_path, args.dataset
+    )
+    model = ImageClassifier(
+        fc, image_dim, args.n_hidden, args.use_fc_init, args.keep_ratio,
         args.n_frozen_layers, args.frozen_fc_init,
     ).to(device)
 
-    n_params       = sum(p.numel() for p in model.parameters())
-    n_trainable    = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    n_params    = sum(p.numel() for p in model.parameters())
+    n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Model  : {model.brain_mlp}")
     print(f"Params : {n_params:,} total  |  {n_trainable:,} trainable\n")
-
-    train_loader, val_loader = get_dataloaders(args.batch_size, args.data_path)
 
     optimizer = torch.optim.Adam(
         filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr
