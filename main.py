@@ -144,7 +144,7 @@ def resolve_device(override: str | None) -> str:
 # FC matrix loading
 # ---------------------------------------------------------------------------
 
-def load_fc_matrix(path: str | None, n: int, sample: str) -> tuple[np.ndarray, str]:
+def load_fc_matrix(path: str | None, n: int, sample: str, subject_id: str | None = None) -> tuple[np.ndarray, str]:
     """Return (fc_matrix, subject_tag) where subject_tag identifies the run."""
     if path is None or path.lower() == "none":
         rng = np.random.default_rng(42)
@@ -158,8 +158,8 @@ def load_fc_matrix(path: str | None, n: int, sample: str) -> tuple[np.ndarray, s
         data = pickle.load(f)
 
     if sample == 'single':
-        subject_id = random.choice(list(data.keys()))
-        # subject_id = '435136'
+        if subject_id is None:
+            subject_id = random.choice(list(data.keys()))
         fc = data[subject_id]['FC']
         sex = data[subject_id]['gender']
         age = data[subject_id]['age']
