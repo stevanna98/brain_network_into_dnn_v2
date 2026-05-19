@@ -88,9 +88,15 @@ def parse_args() -> argparse.Namespace:
         help="If --fc_path is set, whether to sample a single subject's FC ('single') or use the average FC across all subjects ('average')."
     )
     parser.add_argument(
-        "--n_frozen_fc_layers", type=int, default=0,
-        help="Number of the first N brain-MLP layers to initialise from the FC matrix and freeze "
-             "(no gradient updates). Must be <= n_hidden + 1.",
+        "--n_frozen_layers", type=int, default=0,
+        help="Number of the first N brain-MLP layers to freeze (no gradient updates). "
+             "Must be <= n_hidden + 1.",
+    )
+    parser.add_argument(
+        "--frozen_fc_init", action=argparse.BooleanOptionalAction, default=True,
+        help="If set (default), frozen layers are initialised from the FC matrix. "
+             "Use --no_frozen_fc_init for Kaiming random initialisation instead. "
+             "Has no effect when --n_frozen_layers=0.",
     )
 
     # Training
@@ -183,7 +189,8 @@ class CIFARClassifier(nn.Module):
         n_hidden_layers: int,
         use_fc_init: bool,
         keep_ratio: float,
-        n_frozen_fc_layers: int = 0,
+        n_frozen_layers: int = 0,
+        frozen_fc_init: bool = True,
     ) -> None:
         super().__init__()
         n = fc_matrix.shape[0]
@@ -194,7 +201,8 @@ class CIFARClassifier(nn.Module):
             n_hidden_layers=n_hidden_layers,
             use_fc_init=use_fc_init,
             keep_ratio=keep_ratio,
-            n_frozen_fc_layers=n_frozen_fc_layers,
+            n_frozen_layers=n_frozen_layers,
+            frozen_fc_init=frozen_fc_init,
         )
         self.classifier = nn.Linear(n, self.N_CLASSES)
 
@@ -355,11 +363,12 @@ def main() -> None:
     device = resolve_device(args.device)
 
     print(f"Device : {device}")
-    print(f"FC init: {args.use_fc_init}  |  hidden layers: {args.n_hidden}  |  frozen FC layers: {args.n_frozen_fc_layers}  |  epochs: {args.epochs}\n")
+    print(f"FC init: {args.use_fc_init}  |  hidden layers: {args.n_hidden}  |  frozen layers: {args.n_frozen_layers} (fc_init={args.frozen_fc_init})  |  epochs: {args.epochs}\n")
 
     fc, subject_tag = load_fc_matrix(args.fc_path, args.n_nodes, args.sample)
     model = CIFARClassifier(
-        fc, args.n_hidden, args.use_fc_init, args.keep_ratio, args.n_frozen_fc_layers
+        fc, args.n_hidden, args.use_fc_init, args.keep_ratio,
+        args.n_frozen_layers, args.frozen_fc_init,
     ).to(device)
 
     n_params       = sum(p.numel() for p in model.parameters())

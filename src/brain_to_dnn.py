@@ -25,6 +25,11 @@ class BrainConnectivityMLP(nn.Module):
                           Connections are ranked by absolute value; the weakest
                           (1 - keep_ratio) fraction are zeroed before the matrix
                           is used as a weight initialiser.  None means no thresholding.
+        n_frozen_layers:  Number of the first N linear layers whose parameters are frozen
+                          (requires_grad=False) during training.
+        frozen_fc_init:   If True (default), frozen layers are initialised from the FC matrix.
+                          If False, frozen layers keep their Kaiming random initialisation.
+                          Has no effect when n_frozen_layers=0.
     """
 
     def __init__(
@@ -35,7 +40,8 @@ class BrainConnectivityMLP(nn.Module):
         activation: Type[nn.Module] = nn.ReLU,
         output_activation: Optional[Type[nn.Module]] = None,
         keep_ratio: Optional[float] = None,
-        n_frozen_fc_layers: int = 0,
+        n_frozen_layers: int = 0,
+        frozen_fc_init: bool = True,
     ) -> None:
         super().__init__()
 
@@ -48,16 +54,17 @@ class BrainConnectivityMLP(nn.Module):
         if keep_ratio is not None and not (0 < keep_ratio <= 1):
             raise ValueError("keep_ratio must be in (0, 1]")
         n_total_layers = n_hidden_layers + 1
-        if not (0 <= n_frozen_fc_layers <= n_total_layers):
+        if not (0 <= n_frozen_layers <= n_total_layers):
             raise ValueError(
-                f"n_frozen_fc_layers must be between 0 and {n_total_layers}, got {n_frozen_fc_layers}"
+                f"n_frozen_layers must be between 0 and {n_total_layers}, got {n_frozen_layers}"
             )
 
         self.n_nodes = n
         self.n_hidden_layers = n_hidden_layers
         self.use_fc_init = use_fc_init
         self.keep_ratio = keep_ratio
-        self.n_frozen_fc_layers = n_frozen_fc_layers
+        self.n_frozen_layers = n_frozen_layers
+        self.frozen_fc_init = frozen_fc_init
 
         if keep_ratio is not None:
             fc_tensor = self._threshold_fc(fc_tensor, keep_ratio)
@@ -67,10 +74,10 @@ class BrainConnectivityMLP(nn.Module):
 
         self.network = self._build_network(fc_tensor, n, n_hidden_layers,
                                            use_fc_init, activation, output_activation,
-                                           n_frozen_fc_layers)
+                                           n_frozen_layers, frozen_fc_init)
 
-        # Freeze the first n_frozen_fc_layers linear layers.
-        for layer in self.linear_layers()[:n_frozen_fc_layers]:
+        # Freeze the first n_frozen_layers linear layers.
+        for layer in self.linear_layers()[:n_frozen_layers]:
             layer.requires_grad_(False)
 
     # ------------------------------------------------------------------
@@ -113,7 +120,8 @@ class BrainConnectivityMLP(nn.Module):
         use_fc_init: bool,
         activation: Type[nn.Module],
         output_activation: Optional[Type[nn.Module]],
-        n_frozen_fc_layers: int = 0,
+        n_frozen_layers: int = 0,
+        frozen_fc_init: bool = True,
     ) -> nn.Sequential:
         n_linear = n_hidden_layers + 1  # hidden layers + output layer
         layers: list[nn.Module] = []
@@ -121,7 +129,7 @@ class BrainConnectivityMLP(nn.Module):
         for i in range(n_linear):
             linear = nn.Linear(n, n)
 
-            if use_fc_init or i < n_frozen_fc_layers:
+            if use_fc_init or (i < n_frozen_layers and frozen_fc_init):
                 with torch.no_grad():
                     linear.weight.copy_(fc_tensor)
                     nn.init.zeros_(linear.bias)
@@ -176,9 +184,13 @@ class BrainConnectivityMLP(nn.Module):
         return correlations
 
     def __repr__(self) -> str:
-        init_mode   = "fc_matrix" if self.use_fc_init else "random (Kaiming)"
-        thresh_str  = f", keep_ratio={self.keep_ratio}" if self.keep_ratio is not None else ""
-        frozen_str  = f", frozen_fc_layers={self.n_frozen_fc_layers}" if self.n_frozen_fc_layers > 0 else ""
+        init_mode  = "fc_matrix" if self.use_fc_init else "random (Kaiming)"
+        thresh_str = f", keep_ratio={self.keep_ratio}" if self.keep_ratio is not None else ""
+        if self.n_frozen_layers > 0:
+            frozen_init = "fc" if self.frozen_fc_init else "random"
+            frozen_str  = f", frozen_layers={self.n_frozen_layers}({frozen_init}_init)"
+        else:
+            frozen_str  = ""
         return (
             f"BrainConnectivityMLP("
             f"n_nodes={self.n_nodes}, "
