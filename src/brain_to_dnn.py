@@ -38,7 +38,7 @@ class BrainConnectivityMLP(nn.Module):
         n_hidden_layers: int = 2,
         use_fc_init: bool = True,
         activation: Type[nn.Module] = nn.ReLU,
-        output_activation: Optional[Type[nn.Module]] = None,
+        output_activation: Optional[Type[nn.Module]] = nn.ReLU,
         keep_ratio: Optional[float] = None,
         n_frozen_layers: int = 0,
         frozen_fc_init: bool = True,
@@ -123,7 +123,8 @@ class BrainConnectivityMLP(nn.Module):
         n_frozen_layers: int = 0,
         frozen_fc_init: bool = True,
     ) -> nn.Sequential:
-        n_linear = n_hidden_layers + 1  # hidden layers + output layer
+        # n_linear = n_hidden_layers + 1  # hidden layers + output layer
+        n_linear = n_hidden_layers
         layers: list[nn.Module] = []
 
         for i in range(n_linear):
