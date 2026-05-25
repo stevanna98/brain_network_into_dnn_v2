@@ -397,7 +397,7 @@ def main() -> None:
         fc, image_dim, args.n_hidden, args.use_fc_init, args.keep_ratio,
         args.n_frozen_layers, args.frozen_fc_init,
     ).to(device)
-    print(f"Model architecture:\n{model.network}\n")
+    print(f"Model architecture:\n{model}\n")
 
     n_params    = sum(p.numel() for p in model.parameters())
     n_trainable = sum(p.numel() for p in model.parameters() if p.requires_grad)
