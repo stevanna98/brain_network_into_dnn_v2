@@ -212,6 +212,7 @@ class ImageClassifier(nn.Module):
             n_frozen_layers=n_frozen_layers,
             frozen_fc_init=frozen_fc_init,
         )
+        print(self.brain_mlp)
         self.classifier = nn.Linear(n, self.N_CLASSES)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
