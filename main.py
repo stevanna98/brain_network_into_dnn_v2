@@ -435,6 +435,9 @@ def main() -> None:
 
     train_losses, train_accs, val_losses, val_accs = [], [], [], []
 
+    import time
+    t_start = time.time()
+
     for epoch in range(1, args.epochs + 1):
         train_loss, train_acc = train_one_epoch(model, train_loader, optimizer, criterion, device)
         val_loss,   val_acc   = evaluate(model, val_loader, criterion, device)
@@ -455,6 +458,11 @@ def main() -> None:
     np.save(os.path.join(args.metrics_dir, f"val_loss_{subject_tag}.npy"), np.array(val_losses))
     np.save(os.path.join(args.metrics_dir, f"val_acc_{subject_tag}.npy"),  np.array(val_accs))
     print(f"Metrics saved to {args.metrics_dir}/ (subject: {subject_tag})")
+
+    elapsed = time.time() - t_start
+    h, rem  = divmod(int(elapsed), 3600)
+    m, s    = divmod(rem, 60)
+    print(f"\nTraining time : {h:02d}:{m:02d}:{s:02d}  ({elapsed:.1f}s total)")
 
 
 if __name__ == "__main__":
