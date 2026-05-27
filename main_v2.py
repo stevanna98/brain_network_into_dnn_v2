@@ -24,7 +24,7 @@ import pickle
 import random
 import sys
 import time
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 
 import matplotlib
 matplotlib.use("Agg")
@@ -352,17 +352,40 @@ def train_subject(job: dict) -> dict:
 # Main
 # ---------------------------------------------------------------------------
 
+def assign_devices(base_device: str, n_jobs: int) -> list[str]:
+    """
+    Return a device string for each job.
+    - Multiple CUDA GPUs: round-robin across all available GPUs.
+    - Single CUDA GPU / MPS / CPU: same device for every job.
+    """
+    if base_device == "cuda" and torch.cuda.device_count() > 1:
+        n_gpus = torch.cuda.device_count()
+        print(f"[INFO] {n_gpus} CUDA GPUs found — assigning workers round-robin.")
+        return [f"cuda:{i % n_gpus}" for i in range(n_jobs)]
+    return [base_device] * n_jobs
+
+
+def _use_threads(device: str) -> bool:
+    """
+    True  → ThreadPoolExecutor  (single GPU/MPS: workers share one device context)
+    False → ProcessPoolExecutor (multiple CUDA GPUs: each process owns a device)
+    """
+    if device == "cuda" and torch.cuda.device_count() > 1:
+        return False   # multiple GPUs → separate processes, round-robin assignment
+    return True        # single GPU, MPS, or CPU → threads share the device safely
+
+
 def main() -> None:
+    import multiprocessing as _mp
     args   = parse_args()
     device = resolve_device(args.device)
 
-    # Parallel workers cannot safely share a single GPU
-    worker_device = "cpu" if args.n_workers > 1 else device
-    if args.n_workers > 1 and device != "cpu":
-        print(f"[INFO] n_workers={args.n_workers} — forcing CPU per worker "
-              f"(GPU '{device}' cannot be shared across processes).")
+    if args.n_workers > 1 and not _use_threads(device):
+        # Multi-GPU ProcessPoolExecutor requires spawn to avoid inheriting
+        # a forked GPU context that can deadlock or corrupt state.
+        _mp.set_start_method("spawn", force=True)
 
-    print(f"Device  : {worker_device}  |  Dataset: {args.dataset}  |  Workers: {args.n_workers}")
+    print(f"Device  : {device}  |  Dataset: {args.dataset}  |  Workers: {args.n_workers}")
     if args.layer_config:
         print(f"Config  : layer_config={args.layer_config}  |  n_hidden={args.n_hidden}")
     else:
@@ -385,18 +408,24 @@ def main() -> None:
     os.makedirs(args.plots_dir,   exist_ok=True)
 
     # Build one job dict per subject (plain dicts are picklable)
-    jobs = []
+    valid_subjects = []
     for sid in subject_ids:
         key   = sid if sid in fc_data else str(sid)
         entry = fc_data.get(key)
         if entry is None:
             print(f"Subject {sid} not found in pickle — skipping.")
-            continue
+        else:
+            valid_subjects.append((sid, entry))
+
+    devices = assign_devices(device, len(valid_subjects))
+
+    jobs = []
+    for (sid, entry), dev in zip(valid_subjects, devices):
         jobs.append({
             "subject_id":     sid,
             "fc":             entry["FC"],
             "image_dim":      image_dim,
-            "device":         worker_device,
+            "device":         dev,
             "data_path":      args.data_path,
             "dataset":        args.dataset,
             "batch_size":     args.batch_size,
@@ -440,8 +469,13 @@ def main() -> None:
                 csv.DictWriter(f, fieldnames=csv_fields).writerow(result)
 
     else:
+        use_threads = _use_threads(device)
+        Executor    = ThreadPoolExecutor if use_threads else ProcessPoolExecutor
+        mode        = "threads (shared GPU context)" if use_threads else "processes (multi-GPU)"
+        print(f"[INFO] Parallel mode: {mode}\n")
+
         completed = 0
-        with ProcessPoolExecutor(max_workers=args.n_workers) as pool:
+        with Executor(max_workers=args.n_workers) as pool:
             future_to_sid = {pool.submit(train_subject, job): job["subject_id"]
                              for job in jobs}
             for future in as_completed(future_to_sid):
