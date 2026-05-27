@@ -48,6 +48,8 @@ torch.backends.cudnn.benchmark = False
 # Argument parser
 # ---------------------------------------------------------------------------
 
+# python main.py --dataset mnist --fc_path '/Users/stefanovannoni/Desktop/IMPERIAL COLLEGE/Data/data/hcp_ya_dataset/subject_data_1_cleaned_precise_age.pkl' --batch_size 64 --epochs 30 --n_hidden 2 --layer_config brain_random --keep_ratio 0.2
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Train BrainConnectivityMLP on CIFAR-10 or MNIST.",
@@ -102,6 +104,15 @@ def parse_args() -> argparse.Namespace:
         help="If set (default), frozen layers are initialised from the FC matrix. "
              "Use --no_frozen_fc_init for Kaiming random initialisation instead. "
              "Has no effect when --n_frozen_layers=0.",
+    )
+    parser.add_argument(
+        "--layer_config", type=str, default=None,
+        choices=["brain_brain", "brain_random", "random_brain"],
+        help="Per-layer init/freeze config (only valid with --n_hidden 2). "
+             "brain_brain: both layers FC-init & frozen. "
+             "brain_random: layer 0 FC-init & frozen, layer 1 random & trainable. "
+             "random_brain: layer 0 random & trainable, layer 1 FC-init & frozen. "
+             "Overrides --use_fc_init, --n_frozen_layers, --frozen_fc_init.",
     )
 
     # Training
@@ -199,6 +210,7 @@ class ImageClassifier(nn.Module):
         keep_ratio: float,
         n_frozen_layers: int = 0,
         frozen_fc_init: bool = True,
+        layer_config: str | None = None,
     ) -> None:
         super().__init__()
         n = fc_matrix.shape[0]
@@ -211,6 +223,7 @@ class ImageClassifier(nn.Module):
             keep_ratio=keep_ratio,
             n_frozen_layers=n_frozen_layers,
             frozen_fc_init=frozen_fc_init,
+            layer_config=layer_config,
         )
         print(self.brain_mlp)
         self.classifier = nn.Linear(n, self.N_CLASSES)
@@ -388,7 +401,10 @@ def main() -> None:
 
     print(f"Device  : {device}")
     print(f"Dataset : {args.dataset}")
-    print(f"FC init : {args.use_fc_init}  |  hidden layers: {args.n_hidden}  |  frozen layers: {args.n_frozen_layers} (fc_init={args.frozen_fc_init})  |  epochs: {args.epochs}\n")
+    if args.layer_config:
+        print(f"FC init : layer_config={args.layer_config}  |  hidden layers: {args.n_hidden}  |  epochs: {args.epochs}\n")
+    else:
+        print(f"FC init : {args.use_fc_init}  |  hidden layers: {args.n_hidden}  |  frozen layers: {args.n_frozen_layers} (fc_init={args.frozen_fc_init})  |  epochs: {args.epochs}\n")
 
     fc, subject_tag = load_fc_matrix(args.fc_path, args.n_nodes, args.sample, args.subject_id)
     train_loader, val_loader, image_dim = get_dataloaders(
@@ -396,7 +412,7 @@ def main() -> None:
     )
     model = ImageClassifier(
         fc, image_dim, args.n_hidden, args.use_fc_init, args.keep_ratio,
-        args.n_frozen_layers, args.frozen_fc_init,
+        args.n_frozen_layers, args.frozen_fc_init, args.layer_config,
     ).to(device)
     print(f"Model architecture:\n{model}\n")
 
@@ -443,3 +459,6 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# python main.py --dataset mnist --batch_size 64 --epochs 30 --n_hidden 1 --n_frozen_layer 1 --subject_id 185139
